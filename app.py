@@ -2,13 +2,14 @@
 AI-Powered Academic/Professional Question Bank
 Streamlit Application with OpenRouter API (Qwen Model)
 API Key: Configured via Streamlit Secrets
+Version: 2.1 - Optimized & Bug Fixes
 """
 
 import streamlit as st
 import os
 from datetime import datetime
 from utils.styling import inject_academic_theme
-from utils.generator import generate_question_answer, generate_multiple_questions, get_unique_questions
+from utils.generator import generate_question_answer, get_unique_questions_fast
 from utils.exporter import export_to_word, export_to_pdf
 
 # Page configuration
@@ -27,15 +28,15 @@ if 'generated_qa' not in st.session_state:
     st.session_state.generated_qa = []
 if 'previous_questions' not in st.session_state:
     st.session_state.previous_questions = set()
+if 'syllabus_input' not in st.session_state:
+    st.session_state.syllabus_input = ""
 
 # Get API Key from Streamlit Secrets
 def get_api_key():
     """Retrieve API key from Streamlit secrets or environment variable."""
     try:
-        # Try Streamlit secrets first
         if hasattr(st, 'secrets') and 'OPENROUTER_API_KEY' in st.secrets:
             return st.secrets["OPENROUTER_API_KEY"]
-        # Fallback to environment variable
         elif os.getenv("OPENROUTER_API_KEY"):
             return os.getenv("OPENROUTER_API_KEY")
         else:
@@ -56,20 +57,20 @@ with st.sidebar:
     3. Choose question type & quantity
     4. Click Submit to generate
     
-    **API Status:** 
+    **Performance:** 
+    - Optimized for speed
+    - Batch processing enabled
     - Model: Qwen 2.5 72B
-    - Provider: OpenRouter
-    - Anti-Duplicate: Enabled
     """)
     
     st.divider()
-    st.caption("🎓 AI Question Bank v2.0")
+    st.caption("🎓 AI Question Bank v2.1")
 
 # Main Header
 st.markdown("""
 <div class="main-header">
     <h1>🎓 AI-Powered Academic/Professional Question Bank</h1>
-    <p>Generate exam-ready questions & answers using Qwen AI - No Duplicates</p>
+    <p>Fast & Efficient Question Generation - No Duplicates</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -79,14 +80,7 @@ if not api_key:
     st.error("""
     ### ⚠️ API Key Not Configured
     
-    The application requires an OpenRouter API key to function. 
-    Please contact the administrator to configure the `OPENROUTER_API_KEY` in Streamlit Secrets.
-    
-    **For administrators:**
-    1. Go to Streamlit Cloud Dashboard
-    2. Select your app
-    3. Click "Settings" → "Secrets"
-    4. Add: `OPENROUTER_API_KEY = "sk-or-your-key-here"`
+    Please configure the `OPENROUTER_API_KEY` in Streamlit Secrets.
     """)
     st.stop()
 
@@ -106,35 +100,26 @@ with col1:
             "Working Professional"
         ],
         index=0,
-        help="Select your current academic or professional level"
+        help="Select your current academic or professional level",
+        key="academic_level_select"
     )
     
     # Institution Name
     institution = st.text_input(
         "Institution Name",
         placeholder="e.g., Periyar University, TamilNadu, India",
-        help="Optional: Adds institutional context to generated content"
+        help="Optional: Adds institutional context to generated content",
+        key="institution_input"
     )
     
-    # Syllabus Content
-    st.markdown('<p style="color:#666;font-size:0.9rem"><strong>Sample Format:</strong></p>', unsafe_allow_html=True)
-    st.markdown("""
-    <div class="syllabus-sample">
-    Topic: Fundamentals of Financial Accounting<br><br>
-    Financial Accounting – Meaning, Definition, Objectives, Basic
-    Accounting Concepts and Conventions - Journal, Ledger
-    Accounts– Subsidiary Books –– Trial Balance - Classification of
-    Errors – Rectification of Errors – Preparation of Suspense
-    Account – Bank Reconciliation Statement - Need and Preparation<br><br>
-    Institution Name : Periyar University,TamilNadu,India.
-    </div>
-    """, unsafe_allow_html=True)
-    
+    # Syllabus Content - Using session state for proper reset
     syllabus = st.text_area(
         "Paste Unit's Syllabus Content",
+        value=st.session_state.syllabus_input,
         height=200,
         placeholder="Paste your syllabus content here...",
-        label_visibility="collapsed"
+        label_visibility="collapsed",
+        key="syllabus_textarea"
     )
     
     st.markdown('</div>', unsafe_allow_html=True)
@@ -147,31 +132,34 @@ with col2:
         "Type of Question",
         options=["1 Mark", "2 Mark", "5 Mark", "10 Mark"],
         index=1,
-        help="Select the mark value to determine answer length"
+        help="Select the mark value to determine answer length",
+        key="question_type_select"
     )
     
     # Display answer guidelines
     guidelines = {
-        "1 Mark": "📝 Objective type (1 sentence, ~15 words)",
-        "2 Mark": "📝 Short paragraph (~3 lines, 40-60 words)",
-        "5 Mark": "📝 Detailed answer (~6 lines, 100-150 words)",
-        "10 Mark": "📝 Comprehensive answer (~12 lines, 200-300 words)"
+        "1 Mark": "📝 Objective (1 sentence, ~15 words)",
+        "2 Mark": "📝 Short (~3 lines, 40-60 words)",
+        "5 Mark": "📝 Detailed (~6 lines, 100-150 words)",
+        "10 Mark": "📝 Comprehensive (~12 lines, 200-300 words)"
     }
     st.info(guidelines[question_type])
     
-    # Number of Questions - DROPDOWN (Enhanced)
+    # Number of Questions - DROPDOWN
     num_questions = st.selectbox(
         "No. of Questions Required",
         options=[10, 20, 30, 50],
         index=0,
-        help="Select how many unique questions to generate"
+        help="Select how many unique questions to generate",
+        key="num_questions_select"
     )
     
     # Variety Enhancement Option
     ensure_variety = st.checkbox(
-        " Ensure Maximum Variety",
+        "✓ Ensure Maximum Variety",
         value=True,
-        help="Prevent duplicate questions and cover different topics"
+        help="Prevent duplicate questions and cover different topics",
+        key="variety_checkbox"
     )
     
     st.markdown('</div>', unsafe_allow_html=True)
@@ -190,19 +178,24 @@ with col_btn4:
     export_pdf = st.button("📕 Export PDF", use_container_width=True)
 st.markdown('</div>', unsafe_allow_html=True)
 
-# Reset functionality
+# Reset functionality - FIXED: Clears everything including syllabus
 if reset_btn:
     st.session_state.generated_qa = []
     st.session_state.previous_questions = set()
+    st.session_state.syllabus_input = ""  # Clear syllabus
     st.rerun()
 
-# Generate Questions
+# Store syllabus in session state
+if syllabus:
+    st.session_state.syllabus_input = syllabus
+
+# Generate Questions - OPTIMIZED FOR SPEED
 if generate_btn:
     if not syllabus.strip():
         st.error("❌ Please paste syllabus content to generate questions.")
         st.stop()
     
-    with st.spinner(f"🤖 Generating {num_questions} unique {question_type} questions using Qwen AI..."):
+    with st.spinner(f"⚡ Fast-generating {num_questions} unique {question_type} questions..."):
         progress_bar = st.progress(0)
         status_text = st.empty()
         
@@ -210,8 +203,8 @@ if generate_btn:
         if not ensure_variety:
             st.session_state.previous_questions = set()
         
-        # Use the enhanced generator with duplicate prevention
-        results = get_unique_questions(
+        # Use FAST generator with optimized settings
+        results = get_unique_questions_fast(
             syllabus=syllabus,
             question_type=question_type,
             academic_level=academic_level,
@@ -232,15 +225,17 @@ if generate_btn:
                 if 'question' in item:
                     st.session_state.previous_questions.add(item['question'].lower().strip())
             
-            st.success(f"✅ Successfully generated {len(results)} unique questions!")
+            generated_count = len(results)
+            st.success(f"✅ Successfully generated {generated_count}/{num_questions} unique questions!")
+            
+            if generated_count < num_questions:
+                st.warning(f"⚠️ Generated {generated_count} instead of {num_questions}. Try again or reduce count.")
             
             # Show variety stats
             unique_count = len(set(q.get('question', '').lower() for q in results))
-            if unique_count == len(results):
+            if unique_count == generated_count:
                 st.balloons()
-                st.info(f"🎯 All {len(results)} questions are unique!")
-            else:
-                st.warning(f"⚠️ Generated {len(results)} questions with {unique_count} unique variations.")
+                st.info(f"🎯 All {generated_count} questions are unique!")
         else:
             st.error("❌ No questions were generated. Please check your input and try again.")
 
@@ -263,7 +258,7 @@ if st.session_state.generated_qa:
     for idx, item in enumerate(st.session_state.generated_qa, 1):
         expander_label = f"❓ Q{idx}: {item.get('topic', 'General Topic')}"
         
-        with st.expander(expander_label, expanded=(idx <= 3)):  # Auto-expand first 3
+        with st.expander(expander_label, expanded=(idx <= 3)):
             st.markdown(f"""
             <div class="answer-box">
                 <div class="question">Q{idx}. {item.get('question', '')}</div>
@@ -322,51 +317,6 @@ if st.session_state.generated_qa and (export_word or export_pdf):
 st.markdown("""
 <div class="app-footer">
     <p>🎓 AI-Powered Academic Question Bank | Powered by Qwen via OpenRouter API</p>
-    <p style="font-size:0.8rem;color:#999">Model: qwen/qwen-2.5-72b-instruct | Anti-Duplicate System v2.0</p>
+    <p style="font-size:0.8rem;color:#999">Model: qwen/qwen-2.5-72b-instruct | Optimized v2.1</p>
 </div>
 """, unsafe_allow_html=True)
-
-# Help/Info Expander
-with st.expander("ℹ️ How to Use & Features"):
-    st.markdown("""
-    ### 📋 Step-by-Step Guide
-    
-    1. **Select Academic Level**
-       - Choose from: School Student, Graduate, JobSeeker, or Working Professional
-    
-    2. **Add Institution (Optional)**
-       - Enter your university or organization name
-    
-    3. **Paste Syllabus Content**
-       - Copy your unit syllabus in the provided format
-       - Include topics, subtopics, and key concepts
-       - More detailed syllabus = Better question variety
-    
-    4. **Configure Questions**
-       - Select Question Type (1/2/5/10 Mark)
-       - Choose number of questions: 10, 20, 30, or 50
-       - Enable "Ensure Maximum Variety" to prevent duplicates
-    
-    5. **Generate & Export**
-       - Click "Submit" to generate questions
-       - Review unique Q&A pairs with topic coverage
-       - Export to Word or PDF format
-    
-    ### 🎯 Anti-Duplicate Features
-    
-    ✅ **Smart Question Tracking**: Remembers previously generated questions<br>
-    ✅ **Topic Diversity**: Covers different topics from syllabus<br>
-    ✅ **Variety Enforcement**: Uses different angles and difficulty levels<br>
-    ✅ **Duplicate Detection**: Automatically filters identical questions<br>
-    
-    ### 📏 Answer Length Guidelines
-    | Mark Type | Answer Format | Approx. Length |
-    |-----------|--------------|----------------|
-    | 1 Mark | Objective/MCQ style | 1 sentence (~15 words) |
-    | 2 Mark | Short paragraph | ~3 lines (40-60 words) |
-    | 5 Mark | Detailed explanation | ~6 lines (100-150 words) |
-    | 10 Mark | Comprehensive answer | ~12 lines (200-300 words) |
-    
-    ### 🔐 Security Note
-    API key is securely stored in Streamlit Cloud Secrets and never exposed in the UI.
-    """)
