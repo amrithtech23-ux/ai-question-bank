@@ -79,7 +79,7 @@ with st.sidebar:
 st.markdown("""
 <div class="main-header">
     <h1>🎓 AI-Powered Academic/Professional Question Bank</h1>
-    <p>Fast & Efficient Question Generation - No Duplicates</p>
+    <p>Fast & Efficient Question Generation </p>
 </div>
 """, unsafe_allow_html=True)
 
