@@ -8,7 +8,7 @@ import streamlit as st
 import os
 from datetime import datetime
 from utils.styling import inject_academic_theme
-from utils.generator import generate_question_answer, generate_multiple_questions
+from utils.generator import generate_question_answer, generate_multiple_questions, get_unique_questions
 from utils.exporter import export_to_word, export_to_pdf
 
 # Page configuration
@@ -25,6 +25,8 @@ inject_academic_theme()
 # Session state initialization
 if 'generated_qa' not in st.session_state:
     st.session_state.generated_qa = []
+if 'previous_questions' not in st.session_state:
+    st.session_state.previous_questions = set()
 
 # Get API Key from Streamlit Secrets
 def get_api_key():
@@ -41,7 +43,7 @@ def get_api_key():
     except Exception:
         return None
 
-# Sidebar - App Information (No API Key Input)
+# Sidebar - App Information
 with st.sidebar:
     st.header("ℹ️ App Information")
     
@@ -51,22 +53,23 @@ with st.sidebar:
     **How to Use:**
     1. Select your academic level
     2. Paste syllabus content
-    3. Choose question type
+    3. Choose question type & quantity
     4. Click Submit to generate
     
     **API Status:** 
     - Model: Qwen 2.5 72B
     - Provider: OpenRouter
+    - Anti-Duplicate: Enabled
     """)
     
     st.divider()
-    st.caption("🎓 AI Question Bank v1.0")
+    st.caption("🎓 AI Question Bank v2.0")
 
 # Main Header
 st.markdown("""
 <div class="main-header">
     <h1>🎓 AI-Powered Academic/Professional Question Bank</h1>
-    <p>Generate exam-ready questions & answers using Qwen AI</p>
+    <p>Generate exam-ready questions & answers using Qwen AI - No Duplicates</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -156,13 +159,19 @@ with col2:
     }
     st.info(guidelines[question_type])
     
-    # Number of questions
-    num_questions = st.slider(
-        "Number of Questions",
-        min_value=1,
-        max_value=10,
-        value=3,
-        help="How many questions to generate"
+    # Number of Questions - DROPDOWN (Enhanced)
+    num_questions = st.selectbox(
+        "No. of Questions Required",
+        options=[10, 20, 30, 50],
+        index=0,
+        help="Select how many unique questions to generate"
+    )
+    
+    # Variety Enhancement Option
+    ensure_variety = st.checkbox(
+        " Ensure Maximum Variety",
+        value=True,
+        help="Prevent duplicate questions and cover different topics"
     )
     
     st.markdown('</div>', unsafe_allow_html=True)
@@ -184,6 +193,7 @@ st.markdown('</div>', unsafe_allow_html=True)
 # Reset functionality
 if reset_btn:
     st.session_state.generated_qa = []
+    st.session_state.previous_questions = set()
     st.rerun()
 
 # Generate Questions
@@ -192,29 +202,45 @@ if generate_btn:
         st.error("❌ Please paste syllabus content to generate questions.")
         st.stop()
     
-    with st.spinner(f"🤖 Generating {num_questions} {question_type} questions using Qwen AI..."):
-        results = []
+    with st.spinner(f"🤖 Generating {num_questions} unique {question_type} questions using Qwen AI..."):
         progress_bar = st.progress(0)
+        status_text = st.empty()
         
-        for i in range(num_questions):
-            result = generate_question_answer(
-                syllabus=syllabus,
-                question_type=question_type,
-                academic_level=academic_level,
-                api_key=api_key,  # Use API key from secrets
-                institution=institution if institution else None
-            )
-            
-            if "error" in result:
-                st.warning(f"⚠️ Question {i+1}: {result['error']}")
-            else:
-                results.append(result)
-            
-            progress_bar.progress((i + 1) / num_questions)
+        # Clear previous questions if starting fresh
+        if not ensure_variety:
+            st.session_state.previous_questions = set()
+        
+        # Use the enhanced generator with duplicate prevention
+        results = get_unique_questions(
+            syllabus=syllabus,
+            question_type=question_type,
+            academic_level=academic_level,
+            api_key=api_key,
+            num_questions=num_questions,
+            institution=institution if institution else None,
+            previous_questions=st.session_state.previous_questions if ensure_variety else set(),
+            progress_callback=lambda p, msg: (progress_bar.progress(p), status_text.text(msg))
+        )
+        
+        progress_bar.progress(1.0)
+        status_text.text("✅ Generation complete!")
         
         if results:
             st.session_state.generated_qa = results
-            st.success(f"✅ Successfully generated {len(results)} questions!")
+            # Update previous questions set
+            for item in results:
+                if 'question' in item:
+                    st.session_state.previous_questions.add(item['question'].lower().strip())
+            
+            st.success(f"✅ Successfully generated {len(results)} unique questions!")
+            
+            # Show variety stats
+            unique_count = len(set(q.get('question', '').lower() for q in results))
+            if unique_count == len(results):
+                st.balloons()
+                st.info(f"🎯 All {len(results)} questions are unique!")
+            else:
+                st.warning(f"⚠️ Generated {len(results)} questions with {unique_count} unique variations.")
         else:
             st.error("❌ No questions were generated. Please check your input and try again.")
 
@@ -222,8 +248,22 @@ if generate_btn:
 if st.session_state.generated_qa:
     st.markdown('<div class="output-card"><h3>📚 Generated Questions & Answers</h3>', unsafe_allow_html=True)
     
+    # Show summary stats
+    total_q = len(st.session_state.generated_qa)
+    unique_topics = len(set(q.get('topic', 'General') for q in st.session_state.generated_qa))
+    
+    col_stat1, col_stat2, col_stat3 = st.columns(3)
+    col_stat1.metric("Total Questions", total_q)
+    col_stat2.metric("Unique Topics", unique_topics)
+    col_stat3.metric("Question Type", question_type)
+    
+    st.divider()
+    
+    # Display questions with numbering
     for idx, item in enumerate(st.session_state.generated_qa, 1):
-        with st.expander(f"❓ Question {idx}: {item.get('topic', 'Syllabus Topic')}", expanded=True):
+        expander_label = f"❓ Q{idx}: {item.get('topic', 'General Topic')}"
+        
+        with st.expander(expander_label, expanded=(idx <= 3)):  # Auto-expand first 3
             st.markdown(f"""
             <div class="answer-box">
                 <div class="question">Q{idx}. {item.get('question', '')}</div>
@@ -232,12 +272,13 @@ if st.session_state.generated_qa:
             """, unsafe_allow_html=True)
             
             # Metadata chips
-            cols = st.columns(3)
+            cols = st.columns(4)
             if item.get('difficulty'):
                 cols[0].metric("Difficulty", item['difficulty'])
             if item.get('key_concepts'):
                 cols[1].write(f"**Concepts:** {', '.join(item['key_concepts'][:2])}")
             cols[2].write(f"**Type:** {item.get('question_type')}")
+            cols[3].write(f"**Topic:** {item.get('topic', 'N/A')[:20]}...")
     
     st.markdown('</div>', unsafe_allow_html=True)
 
@@ -281,12 +322,12 @@ if st.session_state.generated_qa and (export_word or export_pdf):
 st.markdown("""
 <div class="app-footer">
     <p>🎓 AI-Powered Academic Question Bank | Powered by Qwen via OpenRouter API</p>
-    <p style="font-size:0.8rem;color:#999">Model: qwen/qwen-2.5-72b-instruct | Secure API Configuration</p>
+    <p style="font-size:0.8rem;color:#999">Model: qwen/qwen-2.5-72b-instruct | Anti-Duplicate System v2.0</p>
 </div>
 """, unsafe_allow_html=True)
 
 # Help/Info Expander
-with st.expander("ℹ️ How to Use"):
+with st.expander("ℹ️ How to Use & Features"):
     st.markdown("""
     ### 📋 Step-by-Step Guide
     
@@ -299,15 +340,24 @@ with st.expander("ℹ️ How to Use"):
     3. **Paste Syllabus Content**
        - Copy your unit syllabus in the provided format
        - Include topics, subtopics, and key concepts
+       - More detailed syllabus = Better question variety
     
     4. **Configure Questions**
        - Select Question Type (1/2/5/10 Mark)
-       - Choose number of questions to generate (1-10)
+       - Choose number of questions: 10, 20, 30, or 50
+       - Enable "Ensure Maximum Variety" to prevent duplicates
     
     5. **Generate & Export**
        - Click "Submit" to generate questions
-       - Review generated Q&A pairs
+       - Review unique Q&A pairs with topic coverage
        - Export to Word or PDF format
+    
+    ### 🎯 Anti-Duplicate Features
+    
+    ✅ **Smart Question Tracking**: Remembers previously generated questions<br>
+    ✅ **Topic Diversity**: Covers different topics from syllabus<br>
+    ✅ **Variety Enforcement**: Uses different angles and difficulty levels<br>
+    ✅ **Duplicate Detection**: Automatically filters identical questions<br>
     
     ### 📏 Answer Length Guidelines
     | Mark Type | Answer Format | Approx. Length |
