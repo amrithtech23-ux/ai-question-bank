@@ -1,5 +1,5 @@
-"""Question and Answer generation using OpenRouter API with Qwen model.
-Enhanced duplicate prevention with 90% similarity threshold.
+"""Question and Answer generation - Optimized for SPEED and COMPLETENESS.
+Ensures requested number of questions are generated.
 """
 
 import os
@@ -41,265 +41,131 @@ ANSWER_GUIDELINES = {
 
 def normalize_question(question: str) -> str:
     """Normalize question text for comparison."""
-    # Convert to lowercase and strip whitespace
     normalized = question.lower().strip()
-    # Remove extra spaces
     normalized = ' '.join(normalized.split())
-    # Remove punctuation for comparison
     normalized = re.sub(r'[^\w\s]', '', normalized)
-    # Remove common question starters to focus on core content
-    normalized = re.sub(r'^(what is|what are|explain|describe|define|discuss|list|state|why|how|when|where)\s+', '', normalized)
     return normalized
 
 
 def get_question_hash(question: str) -> str:
-    """Generate hash for question to detect exact duplicates."""
+    """Generate hash for question."""
     return hashlib.md5(normalize_question(question).encode()).hexdigest()
 
 
 def extract_key_terms(question: str) -> Set[str]:
     """Extract key technical terms from question."""
-    # Remove common words
     stop_words = {
         'the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
-        'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should',
-        'may', 'might', 'must', 'shall', 'can', 'need', 'dare', 'ought', 'used',
-        'to', 'of', 'in', 'for', 'on', 'with', 'at', 'by', 'from', 'as', 'into',
-        'through', 'during', 'before', 'after', 'above', 'below', 'between',
-        'under', 'again', 'further', 'then', 'once', 'here', 'there', 'when',
-        'where', 'why', 'how', 'all', 'each', 'few', 'more', 'most', 'other',
-        'some', 'such', 'no', 'nor', 'not', 'only', 'own', 'same', 'so', 'than',
-        'too', 'very', 'just', 'and', 'but', 'if', 'or', 'because', 'until',
-        'while', 'although', 'though', 'after', 'before', 'about', 'against'
+        'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could',
+        'may', 'might', 'must', 'shall', 'can', 'need', 'to', 'of', 'in',
+        'for', 'on', 'with', 'at', 'by', 'from', 'as', 'into', 'through',
+        'before', 'after', 'above', 'below', 'between', 'under', 'again',
+        'then', 'once', 'here', 'there', 'when', 'where', 'why', 'how',
+        'all', 'each', 'few', 'more', 'most', 'other', 'some', 'such',
+        'no', 'nor', 'not', 'only', 'own', 'same', 'so', 'than', 'too',
+        'very', 'just', 'and', 'but', 'if', 'or', 'because', 'until',
+        'while', 'although', 'what', 'which', 'this', 'that', 'these',
+        'those', 'am', 'being', 'has', 'having'
     }
     
-    # Extract words
     words = re.findall(r'\b[a-z]{3,}\b', question.lower())
-    
-    # Filter out stop words and keep technical terms
     key_terms = {word for word in words if word not in stop_words}
-    
     return key_terms
 
 
-def calculate_similarity(question1: str, question2: str) -> float:
-    """
-    Calculate comprehensive similarity between two questions.
-    Returns a value between 0 and 1 (1 = identical).
-    """
-    # Normalize both questions
-    q1_norm = normalize_question(question1)
-    q2_norm = normalize_question(question2)
-    
-    # Exact match check
-    if q1_norm == q2_norm:
-        return 1.0
-    
-    # Extract key terms
-    terms1 = extract_key_terms(q1_norm)
-    terms2 = extract_key_terms(q2_norm)
-    
-    # Check for shared technical terms (very important)
-    shared_terms = terms1 & terms2
-    
-    # If 3+ key terms match, likely similar
-    if len(shared_terms) >= 3:
-        term_overlap = len(shared_terms) / min(len(terms1), len(terms2))
-        if term_overlap > 0.7:
-            return 0.85 + (term_overlap * 0.15)  # 85-100% similarity
-    
-    # Jaccard similarity on normalized text
-    words1 = set(q1_norm.split())
-    words2 = set(q2_norm.split())
-    
-    if not words1 or not words2:
-        return 0.0
-    
-    intersection = words1 & words2
-    union = words1 | words2
-    jaccard = len(intersection) / len(union)
-    
-    # Key phrase similarity (3-5 word sequences)
-    def get_ngrams(text, n=3):
-        words = text.split()
-        return {' '.join(words[i:i+n]) for i in range(len(words)-n+1)}
-    
-    trigrams1 = get_ngrams(q1_norm, 3)
-    trigrams2 = get_ngrams(q2_norm, 3)
-    
-    if trigrams1 and trigrams2:
-        trigram_overlap = len(trigrams1 & trigrams2) / max(len(trigrams1), len(trigrams2))
-    else:
-        trigram_overlap = 0
-    
-    # Check if questions share the same main topic
-    # (first 3-5 words often contain the topic)
-    q1_start = ' '.join(q1_norm.split()[:5])
-    q2_start = ' '.join(q2_norm.split()[:5])
-    start_similarity = 1.0 if q1_start == q2_start else 0.0
-    
-    # Combined similarity score
-    # Weight: 40% word overlap, 40% phrase overlap, 20% topic start
-    similarity = (0.4 * jaccard) + (0.4 * trigram_overlap) + (0.2 * start_similarity)
-    
-    # Boost similarity if key terms overlap significantly
-    if len(shared_terms) >= 2:
-        similarity = min(1.0, similarity + 0.2)
-    
-    return similarity
-
-
-def is_duplicate(new_question: str, existing_questions: Set[str], threshold: float = 0.90) -> tuple:
-    """
-    Check if a question is a duplicate of any existing question.
-    Uses 90% similarity threshold for strict duplicate detection.
-    
-    Returns:
-        tuple: (is_duplicate: bool, similarity_score: float, matched_question: str)
-    """
+def is_simple_duplicate(new_question: str, existing_questions: List[str]) -> bool:
+    """Simple and fast duplicate check."""
     new_normalized = normalize_question(new_question)
+    new_hash = get_question_hash(new_question)
     
-    # Track highest similarity found
-    max_similarity = 0.0
-    matched_question = ""
-    
-    # First check exact match (fast)
-    if new_normalized in existing_questions:
-        return True, 1.0, "Exact match found"
-    
-    # Check against all existing questions
     for existing in existing_questions:
-        similarity = calculate_similarity(new_question, existing)
+        # Exact match
+        if normalize_question(existing) == new_normalized:
+            return True
         
-        if similarity > max_similarity:
-            max_similarity = similarity
-            matched_question = existing
-        
-        if similarity >= threshold:
-            return True, similarity, existing
+        # Hash match
+        if get_question_hash(existing) == new_hash:
+            return True
     
-    return False, max_similarity, matched_question
+    return False
 
 
 def extract_topics_from_syllabus(syllabus: str) -> List[str]:
-    """Extract detailed topics from syllabus with better granularity."""
-    topics = set()
+    """Extract topics from syllabus."""
+    topics = []
     
-    # Pattern 1: Topic headers
-    topic_headers = re.findall(r'Topic:\s*(.+?)(?=\n\n|\n[A-Z]|\Z)', syllabus, re.IGNORECASE)
-    topics.update(topic_headers)
+    # Method 1: Look for Topic: header
+    topic_match = re.search(r'Topic:\s*(.+?)(?=\n\n|\nInstitution)', syllabus, re.IGNORECASE)
+    if topic_match:
+        topics.append(topic_match.group(1).strip())
     
-    # Pattern 2: Items separated by dashes/bullets
+    # Method 2: Split by common delimiters
     sections = re.split(r'[-–—•]', syllabus)
     for section in sections:
         section = section.strip()
-        if section and 10 < len(section) < 100:
-            topics.add(section.strip())
+        if section and 15 < len(section) < 150:
+            # Clean up
+            section = section.strip().rstrip('.,;:')
+            if section and not section.lower().startswith('institution'):
+                topics.append(section)
     
-    # Pattern 3: Lines that look like topics (capitalized, moderate length)
+    # Method 3: Use lines
     lines = syllabus.split('\n')
     for line in lines:
         line = line.strip()
-        if line and not line.startswith('Topic:') and not line.startswith('Institution'):
-            # Check if it's a meaningful topic line
-            words = line.split()
-            if 3 <= len(words) <= 15 and any(word[0].isupper() for word in words[:3]):
-                topics.add(line[:80])
+        if line and len(line) > 20 and len(line) < 200:
+            if not line.lower().startswith(('topic:', 'institution')):
+                topics.append(line[:100])
     
-    # Pattern 4: Extract compound topics (A - B - C format)
-    compound_pattern = re.findall(r'([A-Z][a-zA-Z\s]+)\s*[-–—]\s*([A-Z][a-zA-Z\s]+)', syllabus)
-    for match in compound_pattern:
-        topics.update(match)
-    
-    # Clean up topics
-    cleaned_topics = set()
-    for topic in topics:
-        topic = topic.strip().rstrip('.,;:')
-        if len(topic) > 5:
-            cleaned_topics.add(topic)
-    
-    return list(cleaned_topics)[:50]  # Return up to 50 topics
+    # Remove duplicates and return
+    unique_topics = list(set(topics))
+    return unique_topics[:50]
 
 
-def generate_question_answer(
+def generate_single_question(
     syllabus: str,
     question_type: str,
     academic_level: str,
     api_key: str,
-    institution: Optional[str] = None,
     topic_focus: Optional[str] = None,
     question_number: int = 1,
-    existing_questions: Optional[List[dict]] = None,
-    used_topics: Optional[List[str]] = None
-) -> dict:
-    """
-    Generate question and answer with strict duplicate prevention.
-    """
+    existing_questions: Optional[List[str]] = None
+) -> Optional[dict]:
+    """Generate a single question quickly."""
     if not api_key:
-        return {"error": "API key is required"}
+        return None
     
     guidelines = ANSWER_GUIDELINES.get(question_type, ANSWER_GUIDELINES["2 Mark"])
     
-    # Build detailed context about existing questions
-    existing_context = ""
+    # Build context
+    avoid_context = ""
     if existing_questions and len(existing_questions) > 0:
-        existing_context = "\n\n🚫 DO NOT create questions similar to these (already covered):\n"
-        for i, q in enumerate(existing_questions[-8:], 1):  # Last 8 questions
-            existing_context += f"{i}. [{q.get('topic', 'General')}] {q.get('question', '')}\n"
+        avoid_context = "\n\nAvoid repeating these topics:\n"
+        for q in existing_questions[-3:]:
+            avoid_context += f"- {q}\n"
     
-    # Build context about used topics
-    used_topics_context = ""
-    if used_topics and len(used_topics) > 0:
-        used_topics_context = f"\n\n📌 AVOID these topics (already covered): {', '.join(used_topics[-5:])}"
+    topic_instruction = f"\nFocus on: {topic_focus}" if topic_focus else ""
     
-    # System prompt with strong emphasis on uniqueness
-    system_prompt = f"""You are an expert academic examiner for {academic_level} level.
-Your task is to create UNIQUE, NON-REPETITIVE exam questions.
+    system_prompt = f"""You are an academic examiner for {academic_level} level.
+Create ONE unique exam question.
+Type: {question_type}
+Answer: {guidelines['instruction']}
 
-Question Type: {question_type}
-Answer Format: {guidelines['instruction']}
+Make it different from previous questions.{avoid_context}"""
 
-⚠️ CRITICAL UNIQUENESS REQUIREMENTS:
-1. Each question MUST cover a DIFFERENT topic/concept
-2. NEVER ask about the same concept twice, even with different wording
-3. Use DIFFERENT cognitive levels: define, explain, compare, analyze, evaluate, apply
-4. Vary question formats and approaches
-5. If a topic has been covered, move to a COMPLETELY different topic
-6. Check the list of already covered questions and topics carefully
-{used_topics_context}
-{existing_context}
-
-Think: "Has this concept been asked before?" If YES, choose a different concept."""
-
-    # User prompt
-    topic_instruction = f"\n📍 Focus on this specific topic: {topic_focus}" if topic_focus else ""
-    
-    user_prompt = f"""SYLLABUS CONTENT:
+    user_prompt = f"""SYLLABUS:
 {syllabus}
 
-TASK: Generate question #{question_number}{topic_instruction}
-
-🎯 REQUIREMENTS:
-- Must be UNIQUE and different from all previous questions
-- Cover a topic/concept NOT yet covered
-- Use a different question format/approach
-- Match the {question_type} answer length
+Generate question #{question_number}{topic_instruction}.
 
 Output JSON:
 {{
-    "question": "your unique question here",
-    "answer": "answer following the guidelines",
-    "topic": "specific topic from syllabus",
+    "question": "your question",
+    "answer": "answer",
+    "topic": "topic covered",
     "difficulty": "Easy/Medium/Hard",
-    "key_concepts": ["concept1", "concept2"]
-}}
-
-⚡ IMPORTANT: Before finalizing, ask yourself:
-1. Is this asking about something already covered?
-2. Am I using different words but same concept?
-3. Is this truly a NEW angle/topic?
-
-If ANY answer is YES, choose a different topic!"""
+    "key_concepts": ["concept1"]
+}}"""
 
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -308,19 +174,128 @@ If ANY answer is YES, choose a different topic!"""
         "X-OpenRouter-Title": "AI Question Bank"
     }
     
-    # Optimized parameters for variety
     payload = {
         "model": QWEN_MODEL,
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt}
         ],
-        "temperature": 0.9,  # Very high for maximum variety
-        "max_tokens": 600,
-        "top_p": 0.95,
-        "frequency_penalty": 0.9,  # Very high to prevent repetition
-        "presence_penalty": 0.9,    # Very high to encourage new topics
-        "top_k": 40  # Sample from more diverse options
+        "temperature": 0.7,
+        "max_tokens": 400,
+        "top_p": 0.9
+    }
+    
+    try:
+        response = requests.post(
+            OPENROUTER_API_URL,
+            headers=headers,
+            data=json.dumps(payload),
+            timeout=30
+        )
+        response.raise_for_status()
+        result = response.json()
+        
+        content = result["choices"][0]["message"]["content"]
+        
+        # Extract JSON
+        json_match = re.search(r'\{[\s\S]*\}', content)
+        if json_match:
+            qa_data = json.loads(json_match.group())
+            qa_data["question_type"] = question_type
+            qa_data["academic_level"] = academic_level
+            return qa_data
+        else:
+            return None
+        
+    except Exception as e:
+        print(f"Error generating question: {e}")
+        return None
+
+
+def generate_batch_questions(
+    syllabus: str,
+    question_type: str,
+    academic_level: str,
+    api_key: str,
+    batch_size: int = 5,
+    institution: Optional[str] = None,
+    existing_questions: Optional[List[dict]] = None,
+    available_topics: Optional[List[str]] = None
+) -> List[dict]:
+    """Generate multiple questions in ONE API call."""
+    if not api_key:
+        return []
+    
+    guidelines = ANSWER_GUIDELINES.get(question_type, ANSWER_GUIDELINES["2 Mark"])
+    
+    # Build context
+    existing_context = ""
+    if existing_questions and len(existing_questions) > 0:
+        existing_context = "\n\nAlready covered (avoid these):\n"
+        for i, q in enumerate(existing_questions[-5:], 1):
+            existing_context += f"{i}. {q.get('question', '')}\n"
+    
+    # Topics context
+    topics_context = ""
+    if available_topics and len(available_topics) > 0:
+        import random
+        sample_topics = random.sample(available_topics, min(10, len(available_topics)))
+        topics_context = f"\nCover different topics from: {', '.join(sample_topics)}"
+    
+    system_prompt = f"""You are an expert academic examiner for {academic_level} level.
+Create {batch_size} UNIQUE exam questions.
+
+Question Type: {question_type}
+Answer: {guidelines['instruction']}
+
+Requirements:
+1. Each question must cover a DIFFERENT topic
+2. Use different question formats
+3. No repetition{topics_context}
+{existing_context}"""
+
+    user_prompt = f"""SYLLABUS:
+{syllabus}
+
+Generate {batch_size} unique questions in JSON array format:
+
+[
+    {{
+        "question": "question 1",
+        "answer": "answer 1",
+        "topic": "topic 1",
+        "difficulty": "Easy/Medium/Hard",
+        "key_concepts": ["concept1", "concept2"]
+    }},
+    {{
+        "question": "question 2",
+        "answer": "answer 2",
+        "topic": "topic 2",
+        "difficulty": "Easy/Medium/Hard",
+        "key_concepts": ["concept1"]
+    }}
+]
+
+Make each question cover a different topic from the syllabus."""
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://questionbank.app",
+        "X-OpenRouter-Title": "AI Question Bank"
+    }
+    
+    payload = {
+        "model": QWEN_MODEL,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ],
+        "temperature": 0.7,
+        "max_tokens": 2500,
+        "top_p": 0.9,
+        "frequency_penalty": 0.3,
+        "presence_penalty": 0.3
     }
     
     try:
@@ -335,25 +310,23 @@ If ANY answer is YES, choose a different topic!"""
         
         content = result["choices"][0]["message"]["content"]
         
-        # Extract JSON
-        json_match = re.search(r'\{[\s\S]*\}', content)
+        # Extract JSON array
+        json_match = re.search(r'\[[\s\S]*\]', content)
         if json_match:
-            qa_data = json.loads(json_match.group())
+            questions_array = json.loads(json_match.group())
+            
+            # Add metadata
+            for q in questions_array:
+                q["question_type"] = question_type
+                q["academic_level"] = academic_level
+            
+            return questions_array
         else:
-            qa_data = {
-                "question": content.split("Answer:")[0].strip() if "Answer:" in content else content,
-                "answer": content.split("Answer:")[-1].strip() if "Answer:" in content else "Answer",
-                "topic": topic_focus if topic_focus else "General",
-                "difficulty": "Medium",
-                "key_concepts": []
-            }
-        
-        qa_data["question_type"] = question_type
-        qa_data["academic_level"] = academic_level
-        return qa_data
+            return []
         
     except Exception as e:
-        return {"error": str(e)}
+        print(f"Batch generation error: {e}")
+        return []
 
 
 def get_unique_questions_fast(
@@ -367,94 +340,122 @@ def get_unique_questions_fast(
     progress_callback: Optional[Callable[[float, str], None]] = None
 ) -> List[dict]:
     """
-    Generate questions with 90% duplicate detection accuracy.
+    Generate EXACT number of questions requested using hybrid approach.
     """
     if previous_questions is None:
         previous_questions = set()
     
     results = []
     all_question_texts = list(previous_questions)
-    used_topics = []
     
-    # Extract all available topics
     available_topics = extract_topics_from_syllabus(syllabus)
     
     if progress_callback:
-        progress_callback(0, f"Generating {num_questions} unique questions (90% accuracy)...")
+        progress_callback(0, f"Generating {num_questions} questions...")
     
-    max_attempts = num_questions * 8  # More attempts for strict uniqueness
-    attempts = 0
-    consecutive_failures = 0
+    # Strategy: Use batch generation first, then fill gaps with single generation
+    batch_size = 5
+    questions_generated = 0
+    max_attempts = num_questions * 3  # Safety limit
+    total_attempts = 0
     
-    while len(results) < num_questions and attempts < max_attempts:
-        attempts += 1
+    # Phase 1: Batch generation (faster)
+    while questions_generated < num_questions and total_attempts < max_attempts:
+        batch_num = questions_generated // batch_size + 1
         
         if progress_callback:
-            progress = len(results) / num_questions
-            progress_callback(progress, f"Generated {len(results)}/{num_questions} (attempt {attempts})...")
+            progress = questions_generated / num_questions
+            progress_callback(progress, f"Batch {batch_num}: {questions_generated}/{num_questions}...")
         
-        # Smart topic selection - prioritize unused topics
-        topic_focus = None
-        if available_topics:
-            unused = [t for t in available_topics if t not in used_topics]
-            if unused:
-                import random
-                topic_focus = random.choice(unused)
-                used_topics.append(topic_focus)
-            else:
-                # All topics used, allow reuse but with different angle
-                import random
-                topic_focus = random.choice(available_topics)
+        # Calculate how many we need
+        remaining = num_questions - questions_generated
+        current_batch_size = min(batch_size, remaining)
         
-        # Generate question with full context
-        result = generate_question_answer(
+        # Generate batch
+        batch_questions = generate_batch_questions(
             syllabus=syllabus,
             question_type=question_type,
             academic_level=academic_level,
             api_key=api_key,
+            batch_size=current_batch_size,
             institution=institution,
-            topic_focus=topic_focus,
-            question_number=len(results) + 1,
             existing_questions=results,
-            used_topics=used_topics
+            available_topics=available_topics
         )
         
-        if "error" in result:
-            consecutive_failures += 1
-            if consecutive_failures > 10:
+        if not batch_questions:
+            # Batch failed, try single generation
+            break
+        
+        # Add unique questions from batch
+        for q in batch_questions:
+            if questions_generated >= num_questions:
                 break
-            continue
+            
+            question_text = q.get('question', '')
+            if not is_simple_duplicate(question_text, all_question_texts):
+                results.append(q)
+                all_question_texts.append(question_text)
+                questions_generated += 1
         
-        question_text = result.get('question', '')
-        
-        # Strict duplicate check with 90% threshold
-        is_dup, similarity, matched = is_duplicate(question_text, set(all_question_texts), threshold=0.90)
-        
-        if is_dup:
-            # Too similar, skip and try again
-            consecutive_failures = 0
-            continue
-        
-        # Question is unique enough, add it
-        results.append(result)
-        all_question_texts.append(normalize_question(question_text))
-        consecutive_failures = 0
+        total_attempts += 1
+        time.sleep(0.2)  # Small delay
     
-    # Final progress update
+    # Phase 2: Fill gaps with single generation if needed
+    while questions_generated < num_questions and total_attempts < max_attempts:
+        total_attempts += 1
+        
+        if progress_callback:
+            progress = questions_generated / num_questions
+            progress_callback(progress, f"Filling gap: {questions_generated}/{num_questions}...")
+        
+        # Select topic for variety
+        topic_focus = None
+        if available_topics:
+            import random
+            # Prioritize less used topics
+            used_topics = [q.get('topic', '') for q in results]
+            unused = [t for t in available_topics if t not in used_topics]
+            if unused:
+                topic_focus = random.choice(unused)
+            else:
+                topic_focus = random.choice(available_topics)
+        
+        # Generate single question
+        question = generate_single_question(
+            syllabus=syllabus,
+            question_type=question_type,
+            academic_level=academic_level,
+            api_key=api_key,
+            topic_focus=topic_focus,
+            question_number=questions_generated + 1,
+            existing_questions=all_question_texts
+        )
+        
+        if question:
+            question_text = question.get('question', '')
+            if not is_simple_duplicate(question_text, all_question_texts):
+                results.append(question)
+                all_question_texts.append(question_text)
+                questions_generated += 1
+        
+        time.sleep(0.1)
+    
+    # Final progress
     if progress_callback:
-        progress_callback(1.0, f"✅ Generated {len(results)}/{num_questions} unique questions")
+        progress_callback(1.0, f"✅ Generated {len(results)}/{num_questions} questions")
     
     return results
 
 
 # Legacy function wrappers
 def generate_question_answer_fast(*args, **kwargs):
-    """Alias for generate_question_answer."""
-    return generate_question_answer(*args, **kwargs)
+    """Alias."""
+    return get_unique_questions_fast(*args, **kwargs)
 
 
 def get_unique_questions(*args, **kwargs):
-    """Legacy function - calls fast version."""
+    """Legacy function."""
     return get_unique_questions_fast(*args, **kwargs)
 
 
