@@ -2,7 +2,7 @@
 AI-Powered Academic/Professional Question Bank
 Streamlit Application with OpenRouter API (Qwen Model)
 API Key: Configured via Streamlit Secrets
-Version: 2.2 - Reset Fixed & Sample Format Added
+Version: 2.3 - Gray Sample Format & Proper Reset
 """
 
 import streamlit as st
@@ -23,7 +23,7 @@ st.set_page_config(
 # Inject academic theme
 inject_academic_theme()
 
-# Session state initialization - MUST be at the top
+# Session state initialization - MUST be at the top BEFORE any UI elements
 if 'generated_qa' not in st.session_state:
     st.session_state.generated_qa = []
 if 'previous_questions' not in st.session_state:
@@ -72,7 +72,7 @@ with st.sidebar:
     """)
     
     st.divider()
-    st.caption("🎓 AI Question Bank v2.2")
+    st.caption("🎓 AI Question Bank v2.3")
 
 # Main Header
 st.markdown("""
@@ -92,8 +92,8 @@ if not api_key:
     """)
     st.stop()
 
-# Sample Syllabus Format (Gray Color)
-syllabus_sample_format = """Topic: Fundamentals of Financial Accounting
+# Sample Syllabus Format (for display in gray box)
+syllabus_sample_text = """Topic: Fundamentals of Financial Accounting
 
 Financial Accounting – Meaning, Definition, Objectives, Basic Accounting Concepts and Conventions - Journal, Ledger Accounts– Subsidiary Books –– Trial Balance - Classification of Errors – Rectification of Errors – Preparation of Suspense Account – Bank Reconciliation Statement - Need and Preparation
 
@@ -130,26 +130,24 @@ with col1:
         key="institution_input"
     )
     
-    # Sample Format Display (Gray Color)
-    st.markdown(
-        '<div class="syllabus-sample">'
-        '<strong>📄 Sample Format:</strong><br>'
-        '<pre style="margin: 10px 0; padding: 10px; background: #f5f5f5; '
-        'border-left: 4px solid #ccc; border-radius: 4px; '
-        'font-family: monospace; font-size: 0.85em; color: #666; '
-        'white-space: pre-wrap; overflow-x: auto;">' + 
-        syllabus_sample_format + 
-        '</pre></div>',
-        unsafe_allow_html=True
-    )
+    # Sample Format Display - GRAY COLOR BOX
+    st.markdown("""
+    <div class="syllabus-sample-box">
+        <div class="sample-header">
+            <span class="sample-icon">📄</span>
+            <strong>Sample Format:</strong>
+        </div>
+        <div class="sample-content">""" + syllabus_sample_text + """
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
     
-    # Syllabus Content - Using session state for proper reset
+    # Syllabus Content Text Area - Uses session state
     syllabus = st.text_area(
         "Paste Unit's Syllabus Content",
         value=st.session_state.syllabus_input,
-        height=250,
-        placeholder="Paste your syllabus content here (follow the sample format above)...",
-        label_visibility="visible",
+        height=200,
+        placeholder="Copy the sample format above and paste your syllabus content here...",
         key="syllabus_textarea"
     )
     
@@ -213,29 +211,31 @@ with col_btn4:
     export_pdf = st.button("📕 Export PDF", use_container_width=True)
 st.markdown('</div>', unsafe_allow_html=True)
 
-# Reset functionality - FIXED: Complete reset with session state clear
+# Reset functionality - COMPLETE RESET including syllabus content
 if reset_btn:
     # Clear ALL session state variables
     st.session_state.generated_qa = []
     st.session_state.previous_questions = set()
-    st.session_state.syllabus_input = ""
+    st.session_state.syllabus_input = ""  # Clear syllabus
     st.session_state.academic_level = "School Student"
     st.session_state.institution = ""
     st.session_state.question_type = "2 Mark"
     st.session_state.num_questions = 10
     
     # Show success message
-    st.success("✅ All fields have been reset successfully!")
+    st.success("✅ All fields cleared! The form has been reset.")
+    st.info("💡 The syllabus text area above should now be empty.")
     
     # Force complete reload
     st.rerun()
 
-# Update session state with current values
-st.session_state.syllabus_input = syllabus
-st.session_state.academic_level = academic_level
-st.session_state.institution = institution
-st.session_state.question_type = question_type
-st.session_state.num_questions = num_questions
+# Update session state with current values (only if not resetting)
+if not reset_btn:
+    st.session_state.syllabus_input = syllabus
+    st.session_state.academic_level = academic_level
+    st.session_state.institution = institution
+    st.session_state.question_type = question_type
+    st.session_state.num_questions = num_questions
 
 # Generate Questions - OPTIMIZED FOR SPEED
 if generate_btn:
@@ -365,6 +365,6 @@ if st.session_state.generated_qa and (export_word or export_pdf):
 st.markdown("""
 <div class="app-footer">
     <p>🎓 AI-Powered Academic Question Bank | Powered by Qwen via OpenRouter API</p>
-    <p style="font-size:0.8rem;color:#999">Model: qwen/qwen-2.5-72b-instruct | Optimized v2.2</p>
+    <p style="font-size:0.8rem;color:#999">Model: qwen/qwen-2.5-72b-instruct | v2.3</p>
 </div>
 """, unsafe_allow_html=True)
