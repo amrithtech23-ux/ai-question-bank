@@ -9,7 +9,7 @@ import streamlit as st
 import os
 from datetime import datetime
 from utils.styling import inject_academic_theme
-from utils.generator import generate_question_answer, get_unique_questions_fast
+from utils.generator import get_unique_questions_fast
 from utils.exporter import export_to_word, export_to_pdf
 
 # Page configuration
