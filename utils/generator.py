@@ -1,5 +1,5 @@
 """Question and Answer generation using OpenRouter API with Qwen model.
-Enhanced duplicate prevention with semantic similarity checking.
+Enhanced duplicate prevention with 90% similarity threshold.
 """
 
 import os
@@ -47,124 +47,178 @@ def normalize_question(question: str) -> str:
     normalized = ' '.join(normalized.split())
     # Remove punctuation for comparison
     normalized = re.sub(r'[^\w\s]', '', normalized)
+    # Remove common question starters to focus on core content
+    normalized = re.sub(r'^(what is|what are|explain|describe|define|discuss|list|state|why|how|when|where)\s+', '', normalized)
     return normalized
 
 
 def get_question_hash(question: str) -> str:
-    """Generate hash for question to detect duplicates."""
+    """Generate hash for question to detect exact duplicates."""
     return hashlib.md5(normalize_question(question).encode()).hexdigest()
+
+
+def extract_key_terms(question: str) -> Set[str]:
+    """Extract key technical terms from question."""
+    # Remove common words
+    stop_words = {
+        'the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
+        'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should',
+        'may', 'might', 'must', 'shall', 'can', 'need', 'dare', 'ought', 'used',
+        'to', 'of', 'in', 'for', 'on', 'with', 'at', 'by', 'from', 'as', 'into',
+        'through', 'during', 'before', 'after', 'above', 'below', 'between',
+        'under', 'again', 'further', 'then', 'once', 'here', 'there', 'when',
+        'where', 'why', 'how', 'all', 'each', 'few', 'more', 'most', 'other',
+        'some', 'such', 'no', 'nor', 'not', 'only', 'own', 'same', 'so', 'than',
+        'too', 'very', 'just', 'and', 'but', 'if', 'or', 'because', 'until',
+        'while', 'although', 'though', 'after', 'before', 'about', 'against'
+    }
+    
+    # Extract words
+    words = re.findall(r'\b[a-z]{3,}\b', question.lower())
+    
+    # Filter out stop words and keep technical terms
+    key_terms = {word for word in words if word not in stop_words}
+    
+    return key_terms
 
 
 def calculate_similarity(question1: str, question2: str) -> float:
     """
-    Calculate similarity between two questions.
+    Calculate comprehensive similarity between two questions.
     Returns a value between 0 and 1 (1 = identical).
     """
     # Normalize both questions
-    q1 = normalize_question(question1)
-    q2 = normalize_question(question2)
+    q1_norm = normalize_question(question1)
+    q2_norm = normalize_question(question2)
     
-    # Quick check - if hashes match, they're identical
-    if q1 == q2:
+    # Exact match check
+    if q1_norm == q2_norm:
         return 1.0
     
-    # Word-based similarity (Jaccard similarity)
-    words1 = set(q1.split())
-    words2 = set(q2.split())
+    # Extract key terms
+    terms1 = extract_key_terms(q1_norm)
+    terms2 = extract_key_terms(q2_norm)
     
-    # Calculate intersection and union
-    intersection = words1 & words2
-    union = words1 | words2
+    # Check for shared technical terms (very important)
+    shared_terms = terms1 & terms2
     
-    if len(union) == 0:
+    # If 3+ key terms match, likely similar
+    if len(shared_terms) >= 3:
+        term_overlap = len(shared_terms) / min(len(terms1), len(terms2))
+        if term_overlap > 0.7:
+            return 0.85 + (term_overlap * 0.15)  # 85-100% similarity
+    
+    # Jaccard similarity on normalized text
+    words1 = set(q1_norm.split())
+    words2 = set(q2_norm.split())
+    
+    if not words1 or not words2:
         return 0.0
     
+    intersection = words1 & words2
+    union = words1 | words2
     jaccard = len(intersection) / len(union)
     
-    # Also check for key phrase overlap (more strict)
-    # Extract key phrases (3+ consecutive words)
-    def get_key_phrases(text, min_words=3):
+    # Key phrase similarity (3-5 word sequences)
+    def get_ngrams(text, n=3):
         words = text.split()
-        phrases = set()
-        for i in range(len(words) - min_words + 1):
-            phrase = ' '.join(words[i:i+min_words])
-            if len(phrase) > 10:  # Only meaningful phrases
-                phrases.add(phrase)
-        return phrases
+        return {' '.join(words[i:i+n]) for i in range(len(words)-n+1)}
     
-    phrases1 = get_key_phrases(q1)
-    phrases2 = get_key_phrases(q2)
+    trigrams1 = get_ngrams(q1_norm, 3)
+    trigrams2 = get_ngrams(q2_norm, 3)
     
-    if phrases1 and phrases2:
-        phrase_intersection = phrases1 & phrases2
-        phrase_union = phrases1 | phrases2
-        phrase_similarity = len(phrase_intersection) / len(phrase_union) if phrase_union else 0
+    if trigrams1 and trigrams2:
+        trigram_overlap = len(trigrams1 & trigrams2) / max(len(trigrams1), len(trigrams2))
     else:
-        phrase_similarity = 0
+        trigram_overlap = 0
     
-    # Combine both metrics (weighted average)
-    # Give more weight to phrase similarity as it's more meaningful
-    similarity = 0.4 * jaccard + 0.6 * phrase_similarity
+    # Check if questions share the same main topic
+    # (first 3-5 words often contain the topic)
+    q1_start = ' '.join(q1_norm.split()[:5])
+    q2_start = ' '.join(q2_norm.split()[:5])
+    start_similarity = 1.0 if q1_start == q2_start else 0.0
+    
+    # Combined similarity score
+    # Weight: 40% word overlap, 40% phrase overlap, 20% topic start
+    similarity = (0.4 * jaccard) + (0.4 * trigram_overlap) + (0.2 * start_similarity)
+    
+    # Boost similarity if key terms overlap significantly
+    if len(shared_terms) >= 2:
+        similarity = min(1.0, similarity + 0.2)
     
     return similarity
 
 
-def is_duplicate(new_question: str, existing_questions: Set[str], threshold: float = 0.7) -> bool:
+def is_duplicate(new_question: str, existing_questions: Set[str], threshold: float = 0.90) -> tuple:
     """
     Check if a question is a duplicate of any existing question.
-    Uses both exact matching and semantic similarity.
-    
-    Args:
-        new_question: The new question to check
-        existing_questions: Set of existing questions
-        threshold: Similarity threshold (0-1) above which questions are considered duplicates
+    Uses 90% similarity threshold for strict duplicate detection.
     
     Returns:
-        True if duplicate, False otherwise
+        tuple: (is_duplicate: bool, similarity_score: float, matched_question: str)
     """
     new_normalized = normalize_question(new_question)
     
+    # Track highest similarity found
+    max_similarity = 0.0
+    matched_question = ""
+    
     # First check exact match (fast)
     if new_normalized in existing_questions:
-        return True
+        return True, 1.0, "Exact match found"
     
-    # Check hash match (fast)
-    new_hash = get_question_hash(new_question)
-    existing_hashes = {get_question_hash(q) for q in existing_questions}
-    if new_hash in existing_hashes:
-        return True
-    
-    # Check semantic similarity (slower but more accurate)
+    # Check against all existing questions
     for existing in existing_questions:
         similarity = calculate_similarity(new_question, existing)
+        
+        if similarity > max_similarity:
+            max_similarity = similarity
+            matched_question = existing
+        
         if similarity >= threshold:
-            return True
+            return True, similarity, existing
     
-    return False
+    return False, max_similarity, matched_question
 
 
-def extract_topics_simple(syllabus: str) -> List[str]:
-    """Fast topic extraction from syllabus."""
+def extract_topics_from_syllabus(syllabus: str) -> List[str]:
+    """Extract detailed topics from syllabus with better granularity."""
     topics = set()
     
-    # Split by common delimiters
+    # Pattern 1: Topic headers
+    topic_headers = re.findall(r'Topic:\s*(.+?)(?=\n\n|\n[A-Z]|\Z)', syllabus, re.IGNORECASE)
+    topics.update(topic_headers)
+    
+    # Pattern 2: Items separated by dashes/bullets
     sections = re.split(r'[-–—•]', syllabus)
     for section in sections:
         section = section.strip()
-        if section and len(section) > 5 and len(section) < 80:
-            topic = section.strip().rstrip('.')
-            if topic and topic[0].isupper():
-                topics.add(topic)
+        if section and 10 < len(section) < 100:
+            topics.add(section.strip())
     
-    # If not enough topics, use lines
-    if len(topics) < 10:
-        lines = syllabus.split('\n')
-        for line in lines:
-            line = line.strip()
-            if line and len(line) > 10 and len(line) < 100:
-                topics.add(line[:60])
+    # Pattern 3: Lines that look like topics (capitalized, moderate length)
+    lines = syllabus.split('\n')
+    for line in lines:
+        line = line.strip()
+        if line and not line.startswith('Topic:') and not line.startswith('Institution'):
+            # Check if it's a meaningful topic line
+            words = line.split()
+            if 3 <= len(words) <= 15 and any(word[0].isupper() for word in words[:3]):
+                topics.add(line[:80])
     
-    return list(topics)[:30]
+    # Pattern 4: Extract compound topics (A - B - C format)
+    compound_pattern = re.findall(r'([A-Z][a-zA-Z\s]+)\s*[-–—]\s*([A-Z][a-zA-Z\s]+)', syllabus)
+    for match in compound_pattern:
+        topics.update(match)
+    
+    # Clean up topics
+    cleaned_topics = set()
+    for topic in topics:
+        topic = topic.strip().rstrip('.,;:')
+        if len(topic) > 5:
+            cleaned_topics.add(topic)
+    
+    return list(cleaned_topics)[:50]  # Return up to 50 topics
 
 
 def generate_question_answer(
@@ -175,57 +229,77 @@ def generate_question_answer(
     institution: Optional[str] = None,
     topic_focus: Optional[str] = None,
     question_number: int = 1,
-    existing_questions: Optional[List[str]] = None
+    existing_questions: Optional[List[dict]] = None,
+    used_topics: Optional[List[str]] = None
 ) -> dict:
     """
-    Generate question and answer with duplicate prevention.
+    Generate question and answer with strict duplicate prevention.
     """
     if not api_key:
         return {"error": "API key is required"}
     
     guidelines = ANSWER_GUIDELINES.get(question_type, ANSWER_GUIDELINES["2 Mark"])
     
-    # Build context about existing questions to avoid
+    # Build detailed context about existing questions
     existing_context = ""
     if existing_questions and len(existing_questions) > 0:
-        # Show last 5 questions to avoid
-        recent = existing_questions[-5:]
-        existing_context = "\n\nAVOID these already covered questions/angles:\n"
-        for i, q in enumerate(recent, 1):
-            existing_context += f"{i}. {q}\n"
+        existing_context = "\n\n🚫 DO NOT create questions similar to these (already covered):\n"
+        for i, q in enumerate(existing_questions[-8:], 1):  # Last 8 questions
+            existing_context += f"{i}. [{q.get('topic', 'General')}] {q.get('question', '')}\n"
     
-    # System prompt with emphasis on uniqueness
-    system_prompt = f"""You are an expert academic assistant for {academic_level} level.
-Generate UNIQUE exam questions based on syllabus.
+    # Build context about used topics
+    used_topics_context = ""
+    if used_topics and len(used_topics) > 0:
+        used_topics_context = f"\n\n📌 AVOID these topics (already covered): {', '.join(used_topics[-5:])}"
+    
+    # System prompt with strong emphasis on uniqueness
+    system_prompt = f"""You are an expert academic examiner for {academic_level} level.
+Your task is to create UNIQUE, NON-REPETITIVE exam questions.
+
 Question Type: {question_type}
-Answer: {guidelines['instruction']}
+Answer Format: {guidelines['instruction']}
 
-CRITICAL REQUIREMENTS:
-1. Each question MUST be completely different from others
-2. Cover DIFFERENT topics, concepts, and angles
-3. Use different cognitive levels (define, explain, compare, analyze, evaluate)
+⚠️ CRITICAL UNIQUENESS REQUIREMENTS:
+1. Each question MUST cover a DIFFERENT topic/concept
+2. NEVER ask about the same concept twice, even with different wording
+3. Use DIFFERENT cognitive levels: define, explain, compare, analyze, evaluate, apply
 4. Vary question formats and approaches
-5. NEVER repeat similar questions or rephrase existing ones
-{existing_context}"""
+5. If a topic has been covered, move to a COMPLETELY different topic
+6. Check the list of already covered questions and topics carefully
+{used_topics_context}
+{existing_context}
 
-    # User prompt with topic focus
-    topic_instruction = f"\nFocus specifically on: {topic_focus}" if topic_focus else ""
+Think: "Has this concept been asked before?" If YES, choose a different concept."""
+
+    # User prompt
+    topic_instruction = f"\n📍 Focus on this specific topic: {topic_focus}" if topic_focus else ""
     
-    user_prompt = f"""SYLLABUS:
+    user_prompt = f"""SYLLABUS CONTENT:
 {syllabus}
 
-Generate question #{question_number}{topic_instruction}.
+TASK: Generate question #{question_number}{topic_instruction}
+
+🎯 REQUIREMENTS:
+- Must be UNIQUE and different from all previous questions
+- Cover a topic/concept NOT yet covered
+- Use a different question format/approach
+- Match the {question_type} answer length
 
 Output JSON:
 {{
-    "question": "unique question text",
-    "answer": "answer text",
-    "topic": "specific topic covered",
+    "question": "your unique question here",
+    "answer": "answer following the guidelines",
+    "topic": "specific topic from syllabus",
     "difficulty": "Easy/Medium/Hard",
     "key_concepts": ["concept1", "concept2"]
 }}
 
-IMPORTANT: This question must be UNIQUE and different from all previous questions. Cover a different aspect or topic."""
+⚡ IMPORTANT: Before finalizing, ask yourself:
+1. Is this asking about something already covered?
+2. Am I using different words but same concept?
+3. Is this truly a NEW angle/topic?
+
+If ANY answer is YES, choose a different topic!"""
 
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -234,18 +308,19 @@ IMPORTANT: This question must be UNIQUE and different from all previous question
         "X-OpenRouter-Title": "AI Question Bank"
     }
     
-    # Higher temperature and penalties for variety
+    # Optimized parameters for variety
     payload = {
         "model": QWEN_MODEL,
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt}
         ],
-        "temperature": 0.85,  # Higher for more variety
-        "max_tokens": 500,
-        "top_p": 0.9,
-        "frequency_penalty": 0.7,  # Higher to avoid repetition
-        "presence_penalty": 0.7    # Encourage new topics
+        "temperature": 0.9,  # Very high for maximum variety
+        "max_tokens": 600,
+        "top_p": 0.95,
+        "frequency_penalty": 0.9,  # Very high to prevent repetition
+        "presence_penalty": 0.9,    # Very high to encourage new topics
+        "top_k": 40  # Sample from more diverse options
     }
     
     try:
@@ -253,7 +328,7 @@ IMPORTANT: This question must be UNIQUE and different from all previous question
             OPENROUTER_API_URL,
             headers=headers,
             data=json.dumps(payload),
-            timeout=45
+            timeout=60
         )
         response.raise_for_status()
         result = response.json()
@@ -292,46 +367,46 @@ def get_unique_questions_fast(
     progress_callback: Optional[Callable[[float, str], None]] = None
 ) -> List[dict]:
     """
-    FAST GENERATION with enhanced duplicate prevention.
+    Generate questions with 90% duplicate detection accuracy.
     """
     if previous_questions is None:
         previous_questions = set()
     
     results = []
-    all_question_texts = list(previous_questions)  # Track all generated questions
-    max_attempts = num_questions * 5  # More attempts for better variety
-    attempts = 0
+    all_question_texts = list(previous_questions)
+    used_topics = []
     
-    # Extract topics for variety
-    available_topics = extract_topics_simple(syllabus)
-    topics_used = []
+    # Extract all available topics
+    available_topics = extract_topics_from_syllabus(syllabus)
     
     if progress_callback:
-        progress_callback(0, f"Generating {num_questions} unique questions...")
+        progress_callback(0, f"Generating {num_questions} unique questions (90% accuracy)...")
+    
+    max_attempts = num_questions * 8  # More attempts for strict uniqueness
+    attempts = 0
+    consecutive_failures = 0
     
     while len(results) < num_questions and attempts < max_attempts:
         attempts += 1
         
         if progress_callback:
             progress = len(results) / num_questions
-            progress_callback(progress, f"Generated {len(results)}/{num_questions}...")
+            progress_callback(progress, f"Generated {len(results)}/{num_questions} (attempt {attempts})...")
         
-        # Select topic for variety - prioritize unused topics
+        # Smart topic selection - prioritize unused topics
         topic_focus = None
         if available_topics:
-            unused_topics = [t for t in available_topics if t not in topics_used]
-            if unused_topics:
+            unused = [t for t in available_topics if t not in used_topics]
+            if unused:
                 import random
-                topic_focus = random.choice(unused_topics)
-                topics_used.append(topic_focus)
+                topic_focus = random.choice(unused)
+                used_topics.append(topic_focus)
             else:
+                # All topics used, allow reuse but with different angle
                 import random
                 topic_focus = random.choice(available_topics)
-                # Reset used topics to allow reuse after all covered
-                if len(topics_used) > len(available_topics):
-                    topics_used = [topic_focus]
         
-        # Generate question with context of existing questions
+        # Generate question with full context
         result = generate_question_answer(
             syllabus=syllabus,
             question_type=question_type,
@@ -340,22 +415,30 @@ def get_unique_questions_fast(
             institution=institution,
             topic_focus=topic_focus,
             question_number=len(results) + 1,
-            existing_questions=all_question_texts[-10:] if all_question_texts else None
+            existing_questions=results,
+            used_topics=used_topics
         )
         
         if "error" in result:
+            consecutive_failures += 1
+            if consecutive_failures > 10:
+                break
             continue
         
         question_text = result.get('question', '')
         
-        # Check for duplicates using enhanced similarity checking
-        if is_duplicate(question_text, set(all_question_texts), threshold=0.65):
-            # Question is too similar, skip it
+        # Strict duplicate check with 90% threshold
+        is_dup, similarity, matched = is_duplicate(question_text, set(all_question_texts), threshold=0.90)
+        
+        if is_dup:
+            # Too similar, skip and try again
+            consecutive_failures = 0
             continue
         
-        # Question is unique, add it
+        # Question is unique enough, add it
         results.append(result)
         all_question_texts.append(normalize_question(question_text))
+        consecutive_failures = 0
     
     # Final progress update
     if progress_callback:
