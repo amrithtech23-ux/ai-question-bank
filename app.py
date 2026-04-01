@@ -1,11 +1,12 @@
 """
 AI-Powered Academic/Professional Question Bank
 Streamlit Application with OpenRouter API (Qwen Model)
-API Key Name: Qnsbankspro
+API Key: Configured via Streamlit Secrets
 """
 
 import streamlit as st
 import os
+from datetime import datetime
 from utils.styling import inject_academic_theme
 from utils.generator import generate_question_answer, generate_multiple_questions
 from utils.exporter import export_to_word, export_to_pdf
@@ -15,7 +16,7 @@ st.set_page_config(
     page_title="AI Question Bank Generator",
     page_icon="🎓",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="collapsed"
 )
 
 # Inject academic theme
@@ -24,36 +25,42 @@ inject_academic_theme()
 # Session state initialization
 if 'generated_qa' not in st.session_state:
     st.session_state.generated_qa = []
-if 'api_key' not in st.session_state:
-    st.session_state.api_key = ""
 
-# Sidebar - API Configuration
+# Get API Key from Streamlit Secrets
+def get_api_key():
+    """Retrieve API key from Streamlit secrets or environment variable."""
+    try:
+        # Try Streamlit secrets first
+        if hasattr(st, 'secrets') and 'OPENROUTER_API_KEY' in st.secrets:
+            return st.secrets["OPENROUTER_API_KEY"]
+        # Fallback to environment variable
+        elif os.getenv("OPENROUTER_API_KEY"):
+            return os.getenv("OPENROUTER_API_KEY")
+        else:
+            return None
+    except Exception:
+        return None
+
+# Sidebar - App Information (No API Key Input)
 with st.sidebar:
-    st.header("⚙️ API Configuration")
+    st.header("ℹ️ App Information")
     
-    api_key_input = st.text_input(
-        "OpenRouter API Key",
-        type="password",
-        placeholder="sk-or-...",
-        help="Enter your OpenRouter API key (Key Name: Qnsbankspro)"
-    )
-    
-    if api_key_input:
-        st.session_state.api_key = api_key_input
-        st.success("✓ API Key saved")
-    
-    st.divider()
+    st.success("✅ API Key Configured" if get_api_key() else "❌ API Key Missing")
     
     st.info("""
-    **Get API Key:**
-    1. Visit [openrouter.ai](https://openrouter.ai)
-    2. Create account & generate key
-    3. Name it: `Qnsbankspro`
-    4. Copy & paste above
+    **How to Use:**
+    1. Select your academic level
+    2. Paste syllabus content
+    3. Choose question type
+    4. Click Submit to generate
+    
+    **API Status:** 
+    - Model: Qwen 2.5 72B
+    - Provider: OpenRouter
     """)
     
     st.divider()
-    st.caption("🎓 AI-Powered Academic Question Bank v1.0")
+    st.caption("🎓 AI Question Bank v1.0")
 
 # Main Header
 st.markdown("""
@@ -62,6 +69,23 @@ st.markdown("""
     <p>Generate exam-ready questions & answers using Qwen AI</p>
 </div>
 """, unsafe_allow_html=True)
+
+# Check API Key
+api_key = get_api_key()
+if not api_key:
+    st.error("""
+    ### ⚠️ API Key Not Configured
+    
+    The application requires an OpenRouter API key to function. 
+    Please contact the administrator to configure the `OPENROUTER_API_KEY` in Streamlit Secrets.
+    
+    **For administrators:**
+    1. Go to Streamlit Cloud Dashboard
+    2. Select your app
+    3. Click "Settings" → "Secrets"
+    4. Add: `OPENROUTER_API_KEY = "sk-or-your-key-here"`
+    """)
+    st.stop()
 
 # Input Section
 col1, col2 = st.columns([2, 1])
@@ -99,7 +123,7 @@ with col1:
     Accounts– Subsidiary Books –– Trial Balance - Classification of
     Errors – Rectification of Errors – Preparation of Suspense
     Account – Bank Reconciliation Statement - Need and Preparation<br><br>
-    Instituion Name : Periyar University,TamilNadu,India.
+    Institution Name : Periyar University,TamilNadu,India.
     </div>
     """, unsafe_allow_html=True)
     
@@ -164,10 +188,6 @@ if reset_btn:
 
 # Generate Questions
 if generate_btn:
-    if not st.session_state.api_key:
-        st.error("❌ Please enter your OpenRouter API Key in the sidebar first.")
-        st.stop()
-    
     if not syllabus.strip():
         st.error("❌ Please paste syllabus content to generate questions.")
         st.stop()
@@ -181,7 +201,7 @@ if generate_btn:
                 syllabus=syllabus,
                 question_type=question_type,
                 academic_level=academic_level,
-                api_key=st.session_state.api_key,
+                api_key=api_key,  # Use API key from secrets
                 institution=institution if institution else None
             )
             
@@ -196,7 +216,7 @@ if generate_btn:
             st.session_state.generated_qa = results
             st.success(f"✅ Successfully generated {len(results)} questions!")
         else:
-            st.error("❌ No questions were generated. Please check your input and API key.")
+            st.error("❌ No questions were generated. Please check your input and try again.")
 
 # Display Results
 if st.session_state.generated_qa:
@@ -261,7 +281,7 @@ if st.session_state.generated_qa and (export_word or export_pdf):
 st.markdown("""
 <div class="app-footer">
     <p>🎓 AI-Powered Academic Question Bank | Powered by Qwen via OpenRouter API</p>
-    <p style="font-size:0.8rem;color:#999">API Key: Qnsbankspro | Model: qwen/qwen-2.5-72b-instruct</p>
+    <p style="font-size:0.8rem;color:#999">Model: qwen/qwen-2.5-72b-instruct | Secure API Configuration</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -270,21 +290,21 @@ with st.expander("ℹ️ How to Use"):
     st.markdown("""
     ### 📋 Step-by-Step Guide
     
-    1. **Configure API Key** (Sidebar)
-       - Get your key from [openrouter.ai](https://openrouter.ai)
-       - Name it `Qnsbankspro` for easy identification
-       - Paste in the sidebar input
+    1. **Select Academic Level**
+       - Choose from: School Student, Graduate, JobSeeker, or Working Professional
     
-    2. **Fill Input Fields**
-       - Select your Academic/Professional Level
-       - (Optional) Add Institution Name
-       - Paste your syllabus content in the sample format
+    2. **Add Institution (Optional)**
+       - Enter your university or organization name
     
-    3. **Configure Questions**
+    3. **Paste Syllabus Content**
+       - Copy your unit syllabus in the provided format
+       - Include topics, subtopics, and key concepts
+    
+    4. **Configure Questions**
        - Select Question Type (1/2/5/10 Mark)
-       - Choose number of questions to generate
+       - Choose number of questions to generate (1-10)
     
-    4. **Generate & Export**
+    5. **Generate & Export**
        - Click "Submit" to generate questions
        - Review generated Q&A pairs
        - Export to Word or PDF format
@@ -297,8 +317,6 @@ with st.expander("ℹ️ How to Use"):
     | 5 Mark | Detailed explanation | ~6 lines (100-150 words) |
     | 10 Mark | Comprehensive answer | ~12 lines (200-300 words) |
     
-    ### 🔧 Troubleshooting
-    - **API Errors**: Verify your OpenRouter key has credits
-    - **Empty Results**: Check syllabus content is detailed enough
-    - **Export Issues**: Ensure all required libraries are installed
+    ### 🔐 Security Note
+    API key is securely stored in Streamlit Cloud Secrets and never exposed in the UI.
     """)
