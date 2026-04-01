@@ -2,7 +2,7 @@
 AI-Powered Academic/Professional Question Bank
 Streamlit Application with OpenRouter API (Qwen Model)
 API Key: Configured via Streamlit Secrets
-Version: 2.5 - Fixed Duplicates & Reset
+Version: 2.5 -
 """
 
 import streamlit as st
