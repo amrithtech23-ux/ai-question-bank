@@ -117,16 +117,35 @@ ACADEMIC_CSS = """
         border-left: 3px solid var(--accent-color);
     }
     
-    /* Syllabus Sample Format */
+    /* Syllabus Sample Format - Gray Color */
     .syllabus-sample {
-        background: #f1f3f5;
-        padding: 1rem;
+        background: #f8f9fa;
+        border: 1px solid #e9ecef;
+        border-left: 4px solid #6c757d;
         border-radius: 6px;
+        padding: 1rem;
+        margin: 1rem 0;
+    }
+    
+    .syllabus-sample strong {
+        color: #495057;
+        display: block;
+        margin-bottom: 0.5rem;
+        font-size: 0.9rem;
+    }
+    
+    .syllabus-sample pre {
+        background: #f1f3f5;
+        padding: 0.75rem;
+        border-radius: 4px;
         font-family: 'Courier New', monospace;
         font-size: 0.85rem;
         color: #666;
-        margin: 0.5rem 0;
-        border-left: 3px solid #adb5bd;
+        white-space: pre-wrap;
+        word-wrap: break-word;
+        overflow-x: auto;
+        margin: 0;
+        line-height: 1.5;
     }
     
     /* Export Buttons */
