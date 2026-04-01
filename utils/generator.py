@@ -48,7 +48,7 @@ def get_question_hash(question: str) -> str:
     return hashlib.md5(normalize_question(question).encode()).hexdigest()
 
 
-def generate_question_answer_fast(
+def generate_question_answer(
     syllabus: str,
     question_type: str,
     academic_level: str,
@@ -58,7 +58,8 @@ def generate_question_answer_fast(
     question_number: int = 1
 ) -> dict:
     """
-    FAST version: Generate question and answer with optimized parameters.
+    Generate question and answer - FAST VERSION.
+    This is the main function used by the app.
     """
     if not api_key:
         return {"error": "API key is required"}
@@ -148,6 +149,10 @@ Make it UNIQUE from previous questions."""
         return {"error": str(e)}
 
 
+# Alias for backward compatibility
+generate_question_answer_fast = generate_question_answer
+
+
 def extract_topics_simple(syllabus: str) -> List[str]:
     """Fast topic extraction."""
     import re
@@ -234,7 +239,7 @@ def get_unique_questions_fast(
                     topic_focus = random.choice(available_topics)
             
             # Generate question
-            result = generate_question_answer_fast(
+            result = generate_question_answer(
                 syllabus=syllabus,
                 question_type=question_type,
                 academic_level=academic_level,
@@ -265,7 +270,7 @@ def get_unique_questions_fast(
     return results
 
 
-# Legacy function wrapper
+# Legacy function wrapper for backward compatibility
 def get_unique_questions(
     syllabus: str,
     question_type: str,
