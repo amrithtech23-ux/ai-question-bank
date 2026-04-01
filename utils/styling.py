@@ -68,9 +68,16 @@ ACADEMIC_CSS = """
     }
     
     .stTextArea > div > div {
-        border-color: var(--secondary-color) !important;
+        border: 3px solid var(--secondary-color) !important;
+        border-radius: 6px !important;
         font-family: 'Courier New', monospace;
         font-size: 0.95rem;
+        transition: all 0.3s ease;
+    }
+    
+    .stTextArea > div > div:focus-within {
+        border-color: var(--primary-color) !important;
+        box-shadow: 0 0 0 3px rgba(26, 58, 92, 0.1);
     }
     
     /* Button Styling */
@@ -158,6 +165,20 @@ ACADEMIC_CSS = """
         word-wrap: break-word;
         line-height: 1.6;
         border: 1px solid #bbb;
+    }
+    
+    /* BOLD LABEL for Syllabus Text Area */
+    .syllabus-label {
+        margin: 1rem 0 0.5rem 0;
+        font-size: 1rem;
+        color: var(--primary-color);
+        font-weight: 700;
+    }
+    
+    .syllabus-label strong {
+        font-weight: 700;
+        color: var(--text-dark);
+        font-size: 1.05rem;
     }
     
     /* Export Buttons */
