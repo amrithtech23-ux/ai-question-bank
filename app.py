@@ -2,7 +2,7 @@
 AI-Powered Academic/Professional Question Bank
 Streamlit Application with OpenRouter API (Qwen Model)
 API Key: Configured via Streamlit Secrets
-Version: 2.4 - Reset Fixed, Bold Label & Border
+Version: 2.5 - Fixed Duplicates & Reset
 """
 
 import streamlit as st
@@ -23,7 +23,7 @@ st.set_page_config(
 # Inject academic theme
 inject_academic_theme()
 
-# Session state initialization - MUST be at the top BEFORE any UI elements
+# Session state initialization - MUST be at the top
 if 'generated_qa' not in st.session_state:
     st.session_state.generated_qa = []
 if 'previous_questions' not in st.session_state:
@@ -38,8 +38,6 @@ if 'question_type' not in st.session_state:
     st.session_state.question_type = "2 Mark"
 if 'num_questions' not in st.session_state:
     st.session_state.num_questions = 10
-if 'is_reset' not in st.session_state:
-    st.session_state.is_reset = False
 
 # Get API Key from Streamlit Secrets
 def get_api_key():
@@ -71,10 +69,11 @@ with st.sidebar:
     - Optimized for speed
     - Batch processing enabled
     - Model: Qwen 2.5 72B
+    - Anti-duplicate: Enhanced
     """)
     
     st.divider()
-    st.caption("🎓 AI Question Bank v2.4")
+    st.caption("🎓 AI Question Bank v2.5")
 
 # Main Header
 st.markdown("""
@@ -94,17 +93,12 @@ if not api_key:
     """)
     st.stop()
 
-# Sample Syllabus Format (for display in gray box)
+# Sample Syllabus Format
 syllabus_sample_text = """Topic: Fundamentals of Financial Accounting
 
 Financial Accounting – Meaning, Definition, Objectives, Basic Accounting Concepts and Conventions - Journal, Ledger Accounts– Subsidiary Books –– Trial Balance - Classification of Errors – Rectification of Errors – Preparation of Suspense Account – Bank Reconciliation Statement - Need and Preparation
 
 Institution Name : Periyar University, TamilNadu, India."""
-
-# Reset functionality - MUST be checked BEFORE rendering UI elements
-reset_clicked = False
-if 'reset_triggered' not in st.session_state:
-    st.session_state.reset_triggered = False
 
 # Input Section
 col1, col2 = st.columns([2, 1])
@@ -152,20 +146,20 @@ with col1:
     # BOLD LABEL for syllabus text area
     st.markdown('<p class="syllabus-label"><strong>Paste Unit\'s Syllabus Content</strong></p>', unsafe_allow_html=True)
     
-    # Syllabus Content Text Area - Uses session state
+    # Syllabus Content Text Area - Uses session state with unique key
     syllabus = st.text_area(
-        " ",  # Empty label since we're using custom HTML above
-        value="" if st.session_state.is_reset else st.session_state.syllabus_input,
+        " ",
+        value=st.session_state.syllabus_input,
         height=200,
         placeholder="Copy the sample format above and paste your syllabus content here...",
-        key="syllabus_textarea",
+        key=f"syllabus_textarea_{st.session_state.get('reset_counter', 0)}",
         label_visibility="collapsed"
     )
     
     st.markdown('</div>', unsafe_allow_html=True)
 
 with col2:
-    st.markdown('<div class="input-card"><h3>❓ Question Settings</h3>', unsafe_allow_html=True)
+    st.markdown('<div class="input-card"><h3> Question Settings</h3>', unsafe_allow_html=True)
     
     # Question Type Dropdown
     question_type = st.selectbox(
@@ -222,10 +216,10 @@ with col_btn4:
     export_pdf = st.button("📕 Export PDF", use_container_width=True)
 st.markdown('</div>', unsafe_allow_html=True)
 
-# Handle Reset - Complete reset of all fields
-if reset_btn and not st.session_state.reset_triggered:
-    st.session_state.reset_triggered = True
-    st.session_state.is_reset = True
+# Handle Reset - Complete reset with counter increment
+if reset_btn:
+    # Increment reset counter to force text area refresh
+    st.session_state.reset_counter = st.session_state.get('reset_counter', 0) + 1
     
     # Clear ALL session state variables
     st.session_state.generated_qa = []
@@ -243,18 +237,12 @@ if reset_btn and not st.session_state.reset_triggered:
     # Force complete reload
     st.rerun()
 
-# Reset the reset flag after reload
-if st.session_state.reset_triggered:
-    st.session_state.reset_triggered = False
-    st.session_state.is_reset = False
-
-# Update session state with current values (only if not resetting)
-if not st.session_state.is_reset:
-    st.session_state.syllabus_input = syllabus
-    st.session_state.academic_level = academic_level
-    st.session_state.institution = institution
-    st.session_state.question_type = question_type
-    st.session_state.num_questions = num_questions
+# Update session state with current values
+st.session_state.syllabus_input = syllabus
+st.session_state.academic_level = academic_level
+st.session_state.institution = institution
+st.session_state.question_type = question_type
+st.session_state.num_questions = num_questions
 
 # Generate Questions - OPTIMIZED FOR SPEED
 if generate_btn:
@@ -270,7 +258,7 @@ if generate_btn:
         if not ensure_variety:
             st.session_state.previous_questions = set()
         
-        # Use FAST generator with optimized settings
+        # Use FAST generator with enhanced duplicate prevention
         results = get_unique_questions_fast(
             syllabus=syllabus,
             question_type=question_type,
@@ -384,6 +372,6 @@ if st.session_state.generated_qa and (export_word or export_pdf):
 st.markdown("""
 <div class="app-footer">
     <p>🎓 AI-Powered Academic Question Bank | Powered by Qwen via OpenRouter API</p>
-    <p style="font-size:0.8rem;color:#999">Model: qwen/qwen-2.5-72b-instruct | v2.4</p>
+    <p style="font-size:0.8rem;color:#999">Model: qwen/qwen-2.5-72b-instruct | v2.5</p>
 </div>
 """, unsafe_allow_html=True)
